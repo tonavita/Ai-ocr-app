@@ -4,7 +4,7 @@ from PIL import Image
 import io
 import numpy as np
 from streamlit_paste_button import paste_image_button
-from datetime import datetime  # 日付取得用に追加
+from datetime import datetime
 
 # --- ページ設定 ---
 st.set_page_config(page_title="AI OCR App", layout="wide")
@@ -13,7 +13,6 @@ st.set_page_config(page_title="AI OCR App", layout="wide")
 # 0. エラーメッセージの日本語変換関数
 # ==========================================
 def get_japanese_error_message(english_error_text):
-    """英語のエラーを日本語の案内文に変換する"""
     if not english_error_text: return "不明なエラーが発生しました。"
     lower_error = str(english_error_text).lower()
 
@@ -39,9 +38,13 @@ st.write("サイドバーからモデルを選択し、画像をアップロー�
 if 'pasted_images' not in st.session_state:
     st.session_state.pasted_images = []
 
-# ★ OCR結果を一時保存する場所を作る（ファイル名変更時に消えないようにするため）
+# ★ 結果テキストを保持する変数
 if 'ocr_result_text' not in st.session_state:
     st.session_state.ocr_result_text = ""
+
+# ★ ファイル名を保持する変数（勝手に現在時刻で上書きされないようにするため）
+if 'ocr_filename_default' not in st.session_state:
+    st.session_state.ocr_filename_default = ""
 
 # --- APIキーの設定 ---
 try:
@@ -60,20 +63,15 @@ except Exception as e:
 with st.sidebar:
     st.header("⚙️ 設定")
     
-    # モデル選択
     model_options = [
-        "gemini-1.5-flash",          # 推奨
-        "gemini-flash-lite-latest",  # 軽量
-        "gemini-1.5-flash-8b",       # 超高速
-        "gemini-1.5-pro",            # 高精度
-        "gemini-2.0-flash-exp",      # 実験版
+        "gemini-1.5-flash",
+        "gemini-flash-lite-latest",
+        "gemini-1.5-flash-8b",
+        "gemini-1.5-pro",
+        "gemini-2.0-flash-exp",
     ]
     
-    selected_model_name = st.selectbox(
-        "使用するAIモデル",
-        model_options,
-        index=0
-    )
+    selected_model_name = st.selectbox("使用するAIモデル", model_options, index=0)
 
     try:
         model = genai.GenerativeModel(selected_model_name)
@@ -84,7 +82,6 @@ with st.sidebar:
     
     st.header("📤 画像入力")
 
-    # 1. ファイルアップロード
     st.subheader("1. ファイルから選択")
     uploaded_files_from_pc = st.file_uploader(
         "画像を選択 (複数可)",
@@ -95,7 +92,6 @@ with st.sidebar:
 
     st.divider()
 
-    # 2. クリップボードからペースト
     st.subheader("2. クリップボード")
     st.caption("画像をコピーし、ボタンを押すたびに追加されます。")
     
@@ -106,7 +102,6 @@ with st.sidebar:
         key="paste_btn"
     )
 
-    # --- 履歴追加ロジック ---
     if paste_result.image_data is not None:
         is_new_image = False
         if len(st.session_state.pasted_images) == 0:
@@ -120,13 +115,13 @@ with st.sidebar:
             st.session_state.pasted_images.append(paste_result.image_data)
             st.toast("画像を追加しました！", icon="📋")
 
-    # --- ペースト履歴の表示とクリア ---
     if len(st.session_state.pasted_images) > 0:
         st.write(f"**現在のペースト枚数: {len(st.session_state.pasted_images)}枚**")
         
         if st.button("🗑️ ペースト履歴をクリア"):
             st.session_state.pasted_images = []
-            st.session_state.ocr_result_text = "" # 結果もクリア
+            st.session_state.ocr_result_text = ""
+            st.session_state.ocr_filename_default = "" # ファイル名もリセット
             st.rerun()
 
         st.caption("追加済みリスト:")
@@ -140,7 +135,6 @@ with st.sidebar:
 # ==========================================
 target_images = []
 
-# 画像リストの構築
 if uploaded_files_from_pc:
     for up_file in uploaded_files_from_pc:
         target_images.append((Image.open(up_file), up_file.name))
@@ -149,7 +143,6 @@ if st.session_state.pasted_images:
     for i, p_img in enumerate(st.session_state.pasted_images):
         target_images.append((p_img, f"📋 ペースト画像_{i+1}"))
 
-# --- 画像があれば処理開始ボタンを表示 ---
 if target_images:
     st.divider()
     st.subheader(f"📸 読み取り対象: 合計 {len(target_images)} 枚 (モデル: {selected_model_name})")
@@ -161,14 +154,13 @@ if target_images:
 
     st.divider()
 
-    # OCR実行ボタン
     if st.button('まとめてOCR開始', type="primary"):
         # 前回の結果をクリア
         st.session_state.ocr_result_text = ""
         
         progress_bar = st.progress(0)
         total_files = len(target_images)
-        current_results = "" # 一時変数
+        current_results = ""
 
         for i, (image, name) in enumerate(target_images):
             col1, col2 = st.columns([1, 2])
@@ -187,7 +179,6 @@ if target_images:
                         st.success("完了")
                         st.text_area(f"読み取り結果 ({name})", text_result, height=200)
                         
-                        # 結果を結合
                         current_results += f"--- {name} の結果 ---\n{text_result}\n\n"
 
                     except Exception as e:
@@ -199,35 +190,43 @@ if target_images:
             st.divider()
             progress_bar.progress((i + 1) / total_files)
         
-        # ★ 全て完了したらセッションステートに保存
+        # 結果を保存
         st.session_state.ocr_result_text = current_results
+        
+        # ★ ここで「ファイル名」を一度だけ生成して保存する（これにより勝手に書き変わるのを防ぐ）
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        st.session_state.ocr_filename_default = f"ocr_result_{timestamp}.txt"
+        
         st.success("🎉 すべて完了しました！下にダウンロードボタンが表示されます。")
 
 # ==========================================
-# ダウンロードエリア (OCR結果がある場合のみ表示)
+# ダウンロードエリア
 # ==========================================
 if st.session_state.ocr_result_text:
     st.markdown("### 💾 結果の保存")
+    st.info("ファイル名を変更する場合は、入力後に Enter キーを押して確定してください。")
     
     col_dl1, col_dl2 = st.columns([1, 1])
     
     with col_dl1:
-        # 1. ファイル名入力ボックス (初期値に日時を入れる)
-        default_filename = f"ocr_result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-        file_name_input = st.text_input("ファイル名を入力してください", value=default_filename)
+        # 保存された固定のファイル名を初期値として使う
+        file_name_input = st.text_input(
+            "ファイル名を入力してください", 
+            value=st.session_state.ocr_filename_default
+        )
         
-        # 拡張子 .txt がなければ自動追加
         if not file_name_input.endswith(".txt"):
             file_name_input += ".txt"
             
     with col_dl2:
-        st.write("") # レイアウト調整用の空白
         st.write("") 
-        # 2. ダウンロードボタン (入力されたファイル名を使う)
+        st.write("") 
+        
+        # ダウンロードボタン
         st.download_button(
             label="📄 結果をテキストファイルでダウンロード",
             data=st.session_state.ocr_result_text,
-            file_name=file_name_input, # ここに入力された名前が入ります
+            file_name=file_name_input, # ユーザーが入力した最新の名前が使われます
             mime="text/plain",
             type="primary"
         )
