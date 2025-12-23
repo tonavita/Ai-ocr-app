@@ -4,6 +4,7 @@ from PIL import Image
 import io
 import numpy as np
 from streamlit_paste_button import paste_image_button
+from datetime import datetime  # 日付取得用に追加
 
 # --- ページ設定 ---
 st.set_page_config(page_title="AI OCR App", layout="wide")
@@ -34,9 +35,13 @@ def get_japanese_error_message(english_error_text):
 st.title("Ai OCR App")
 st.write("サイドバーからモデルを選択し、画像をアップロードしてください。")
 
-# --- セッションステート初期化（ペースト履歴用） ---
+# --- セッションステート初期化 ---
 if 'pasted_images' not in st.session_state:
     st.session_state.pasted_images = []
+
+# ★ OCR結果を一時保存する場所を作る（ファイル名変更時に消えないようにするため）
+if 'ocr_result_text' not in st.session_state:
+    st.session_state.ocr_result_text = ""
 
 # --- APIキーの設定 ---
 try:
@@ -90,11 +95,10 @@ with st.sidebar:
 
     st.divider()
 
-    # 2. クリップボードからペースト（複数対応版）
+    # 2. クリップボードからペースト
     st.subheader("2. クリップボード")
     st.caption("画像をコピーし、ボタンを押すたびに追加されます。")
     
-    # ペーストボタン
     paste_result = paste_image_button(
         label="📋 画像をペースト (追加)",
         background_color="#7E9469",
@@ -105,11 +109,9 @@ with st.sidebar:
     # --- 履歴追加ロジック ---
     if paste_result.image_data is not None:
         is_new_image = False
-        
         if len(st.session_state.pasted_images) == 0:
             is_new_image = True
         else:
-            # 最新の履歴と比較
             last_img = st.session_state.pasted_images[-1]
             if paste_result.image_data != last_img:
                 is_new_image = True
@@ -122,12 +124,11 @@ with st.sidebar:
     if len(st.session_state.pasted_images) > 0:
         st.write(f"**現在のペースト枚数: {len(st.session_state.pasted_images)}枚**")
         
-        # 履歴クリアボタン
         if st.button("🗑️ ペースト履歴をクリア"):
             st.session_state.pasted_images = []
+            st.session_state.ocr_result_text = "" # 結果もクリア
             st.rerun()
 
-        # 小さくサムネイル表示
         st.caption("追加済みリスト:")
         cols = st.columns(3)
         for i, img in enumerate(st.session_state.pasted_images):
@@ -139,12 +140,11 @@ with st.sidebar:
 # ==========================================
 target_images = []
 
-# 1. アップロード画像の追加
+# 画像リストの構築
 if uploaded_files_from_pc:
     for up_file in uploaded_files_from_pc:
         target_images.append((Image.open(up_file), up_file.name))
 
-# 2. ペースト履歴画像の追加
 if st.session_state.pasted_images:
     for i, p_img in enumerate(st.session_state.pasted_images):
         target_images.append((p_img, f"📋 ペースト画像_{i+1}"))
@@ -154,7 +154,6 @@ if target_images:
     st.divider()
     st.subheader(f"📸 読み取り対象: 合計 {len(target_images)} 枚 (モデル: {selected_model_name})")
 
-    # メインエリアにプレビュー
     cols = st.columns(min(len(target_images), 6))
     for idx, (img, name) in enumerate(target_images):
         with cols[idx % len(cols)]:
@@ -162,12 +161,14 @@ if target_images:
 
     st.divider()
 
+    # OCR実行ボタン
     if st.button('まとめてOCR開始', type="primary"):
+        # 前回の結果をクリア
+        st.session_state.ocr_result_text = ""
+        
         progress_bar = st.progress(0)
         total_files = len(target_images)
-        
-        # ★ 全ての結果をテキストファイルにまとめるための変数
-        all_results_text = ""
+        current_results = "" # 一時変数
 
         for i, (image, name) in enumerate(target_images):
             col1, col2 = st.columns([1, 2])
@@ -183,31 +184,50 @@ if target_images:
                         response = model.generate_content([prompt, image])
                         
                         text_result = response.text
-                        
                         st.success("完了")
                         st.text_area(f"読み取り結果 ({name})", text_result, height=200)
                         
-                        # ★ 結果を結合して保存
-                        all_results_text += f"--- {name} の結果 ---\n{text_result}\n\n"
+                        # 結果を結合
+                        current_results += f"--- {name} の結果 ---\n{text_result}\n\n"
 
                     except Exception as e:
-                        # ★ エラーを日本語に変換して表示
                         jp_msg = get_japanese_error_message(str(e))
                         st.error(f"エラーが発生しました: {jp_msg}")
                         st.warning("⚠️ モデルを変更するか、時間を置いて再試行してください。")
-                        
-                        # エラー内容もテキストファイルに残す
-                        all_results_text += f"--- {name} (エラー) ---\n{jp_msg}\n\n"
+                        current_results += f"--- {name} (エラー) ---\n{jp_msg}\n\n"
             
             st.divider()
             progress_bar.progress((i + 1) / total_files)
         
-        st.success("🎉 すべて完了しました！")
+        # ★ 全て完了したらセッションステートに保存
+        st.session_state.ocr_result_text = current_results
+        st.success("🎉 すべて完了しました！下にダウンロードボタンが表示されます。")
+
+# ==========================================
+# ダウンロードエリア (OCR結果がある場合のみ表示)
+# ==========================================
+if st.session_state.ocr_result_text:
+    st.markdown("### 💾 結果の保存")
+    
+    col_dl1, col_dl2 = st.columns([1, 1])
+    
+    with col_dl1:
+        # 1. ファイル名入力ボックス (初期値に日時を入れる)
+        default_filename = f"ocr_result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        file_name_input = st.text_input("ファイル名を入力してください", value=default_filename)
         
-        # ★ ダウンロードボタンを追加
+        # 拡張子 .txt がなければ自動追加
+        if not file_name_input.endswith(".txt"):
+            file_name_input += ".txt"
+            
+    with col_dl2:
+        st.write("") # レイアウト調整用の空白
+        st.write("") 
+        # 2. ダウンロードボタン (入力されたファイル名を使う)
         st.download_button(
             label="📄 結果をテキストファイルでダウンロード",
-            data=all_results_text,
-            file_name="ocr_results.txt",
-            mime="text/plain"
+            data=st.session_state.ocr_result_text,
+            file_name=file_name_input, # ここに入力された名前が入ります
+            mime="text/plain",
+            type="primary"
         )
