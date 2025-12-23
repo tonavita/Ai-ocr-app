@@ -1,24 +1,18 @@
 import streamlit as st
 import google.generativeai as genai
-from streamlit_paste_button import paste_image_button
 from PIL import Image
-import time
+import io
+import numpy as np
+from streamlit_paste_button import paste_image_button
+
+# --- ページ設定 ---
+st.set_page_config(page_title="AI OCR App", layout="wide")
 
 # ==========================================
-# 1. APIキーの設定
-# ==========================================
-try:
-    if "GOOGLE_API_KEY" in st.secrets:
-        genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-    else:
-        st.error("⚠️ APIキーが見つかりません。Secretsに 'GOOGLE_API_KEY' を設定してください。")
-except Exception as e:
-    st.error(f"設定エラー: {e}")
-
-# ==========================================
-# 2. エラーメッセージ変換ロジック
+# 0. エラーメッセージの日本語変換関数
 # ==========================================
 def get_japanese_error_message(english_error_text):
+    """英語のエラーを日本語の案内文に変換する"""
     if not english_error_text: return "不明なエラーが発生しました。"
     lower_error = str(english_error_text).lower()
 
@@ -36,95 +30,184 @@ def get_japanese_error_message(english_error_text):
 
     return f"予期せぬエラーが発生しました。\n(Error: {english_error_text})"
 
-# ==========================================
-# 3. アプリの画面構成
-# ==========================================
-st.title("AI OCRアプリ 🤖")
+# --- タイトル ---
+st.title("Ai OCR App")
+st.write("サイドバーからモデルを選択し、画像をアップロードしてください。")
 
-# --- セッション情報の初期化 ---
+# --- セッションステート初期化（ペースト履歴用） ---
 if 'pasted_images' not in st.session_state:
     st.session_state.pasted_images = []
 
-st.write("---")
+# --- APIキーの設定 ---
+try:
+    if "GOOGLE_API_KEY" in st.secrets:
+        genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+    else:
+        st.error("⚠️ APIキーが見つかりません。Secretsの設定を確認してください。")
+        st.stop()
+except Exception as e:
+    st.error(f"API設定エラー: {e}")
+    st.stop()
 
-# ★★★ レイアウト修正箇所：ここから ★★★
-# 2つのカラム（列）を作って、ボタンを横に並べます
-col1, col2 = st.columns([1, 1])
+# ==========================================
+# サイドバー (設定エリア)
+# ==========================================
+with st.sidebar:
+    st.header("⚙️ 設定")
+    
+    # モデル選択
+    model_options = [
+        "gemini-1.5-flash",          # 推奨
+        "gemini-flash-lite-latest",  # 軽量
+        "gemini-1.5-flash-8b",       # 超高速
+        "gemini-1.5-pro",            # 高精度
+        "gemini-2.0-flash-exp",      # 実験版
+    ]
+    
+    selected_model_name = st.selectbox(
+        "使用するAIモデル",
+        model_options,
+        index=0
+    )
 
-with col1:
-    st.write("##### 1. 画像を追加")
+    try:
+        model = genai.GenerativeModel(selected_model_name)
+    except Exception as e:
+        st.error(f"モデル設定エラー: {e}")
+
+    st.divider()
+    
+    st.header("📤 画像入力")
+
+    # 1. ファイルアップロード
+    st.subheader("1. ファイルから選択")
+    uploaded_files_from_pc = st.file_uploader(
+        "画像を選択 (複数可)",
+        type=['png', 'jpg', 'jpeg', 'webp'],
+        accept_multiple_files=True,
+        key="file_uploader"
+    )
+
+    st.divider()
+
+    # 2. クリップボードからペースト（複数対応版）
+    st.subheader("2. クリップボード")
+    st.caption("画像をコピーし、ボタンを押すたびに追加されます。")
+    
     # ペーストボタン
     paste_result = paste_image_button(
-        label="📋 画像をペースト",
-        background_color="#4CAF50",
-        hover_background_color="#45a049",
+        label="📋 画像をペースト (追加)",
+        background_color="#7E9469",
+        hover_background_color="#6A8055",
+        key="paste_btn"
     )
-    # 画像追加処理
+
+    # --- 履歴追加ロジック ---
     if paste_result.image_data is not None:
-        if len(st.session_state.pasted_images) == 0 or \
-           st.session_state.pasted_images[-1] != paste_result.image_data:
+        is_new_image = False
+        
+        if len(st.session_state.pasted_images) == 0:
+            is_new_image = True
+        else:
+            # 最新の履歴と比較
+            last_img = st.session_state.pasted_images[-1]
+            if paste_result.image_data != last_img:
+                is_new_image = True
+        
+        if is_new_image:
             st.session_state.pasted_images.append(paste_result.image_data)
+            st.toast("画像を追加しました！", icon="📋")
 
-with col2:
-    st.write(f"##### 2. 現在の枚数: {len(st.session_state.pasted_images)}枚")
-    # クリアボタン
-    if st.button("🗑️ 履歴をクリア", use_container_width=True):
-        st.session_state.pasted_images = []
-        st.rerun()
-# ★★★ レイアウト修正箇所：ここまで ★★★
-
-st.write("---")
-
-# --- プレビューエリア（画像があるときだけ表示） ---
-if st.session_state.pasted_images:
-    st.write("##### ▼ 追加された画像リスト")
-    st.image(st.session_state.pasted_images, width=120, caption=[f"No.{i+1}" for i in range(len(st.session_state.pasted_images))])
-
-st.write("") # 余白
-
-# --- OCR実行ボタン ---
-st.write("##### 3. 読み取り実行")
-
-if st.button("🚀 OCR開始 (テキスト化)", type="primary", use_container_width=True):
-    if not st.session_state.pasted_images:
-        st.warning("画像がありません。まずは「画像をペースト」してください。")
-    else:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+    # --- ペースト履歴の表示とクリア ---
+    if len(st.session_state.pasted_images) > 0:
+        st.write(f"**現在のペースト枚数: {len(st.session_state.pasted_images)}枚**")
         
-        progress_bar = st.progress(0)
-        total_images = len(st.session_state.pasted_images)
-        all_results_text = "" # テキスト保存用
+        # 履歴クリアボタン
+        if st.button("🗑️ ペースト履歴をクリア"):
+            st.session_state.pasted_images = []
+            st.rerun()
 
+        # 小さくサムネイル表示
+        st.caption("追加済みリスト:")
+        cols = st.columns(3)
         for i, img in enumerate(st.session_state.pasted_images):
-            try:
-                with st.spinner(f"{i+1} / {total_images} 枚目を解析中..."):
-                    response = model.generate_content([
-                        "この画像に書かれている文字をすべて書き出してください。整形は不要です。", 
-                        img
-                    ])
-                    text_result = response.text
-                    
-                    # 結果表示
-                    st.success(f"✅ 画像 No.{i+1} の結果")
-                    st.text_area(label=f"結果テキスト {i+1}", value=text_result, height=150)
-                    
-                    # テキスト結合
-                    all_results_text += f"--- 画像 No.{i+1} の結果 ---\n{text_result}\n\n"
-            
-            except Exception as e:
-                jp_msg = get_japanese_error_message(str(e))
-                st.error(f"❌ {i+1}枚目でエラー: {jp_msg}")
-                all_results_text += f"--- 画像 No.{i+1} (エラー) ---\n{jp_msg}\n\n"
-            
-            progress_bar.progress((i + 1) / total_images)
+            with cols[i % 3]:
+                st.image(img, use_container_width=True)
 
-        st.success("🎉 すべての処理が完了しました！")
+# ==========================================
+# メイン処理
+# ==========================================
+target_images = []
+
+# 1. アップロード画像の追加
+if uploaded_files_from_pc:
+    for up_file in uploaded_files_from_pc:
+        target_images.append((Image.open(up_file), up_file.name))
+
+# 2. ペースト履歴画像の追加
+if st.session_state.pasted_images:
+    for i, p_img in enumerate(st.session_state.pasted_images):
+        target_images.append((p_img, f"📋 ペースト画像_{i+1}"))
+
+# --- 画像があれば処理開始ボタンを表示 ---
+if target_images:
+    st.divider()
+    st.subheader(f"📸 読み取り対象: 合計 {len(target_images)} 枚 (モデル: {selected_model_name})")
+
+    # メインエリアにプレビュー
+    cols = st.columns(min(len(target_images), 6))
+    for idx, (img, name) in enumerate(target_images):
+        with cols[idx % len(cols)]:
+             st.image(img, use_container_width=True, caption=f"{idx+1}")
+
+    st.divider()
+
+    if st.button('まとめてOCR開始', type="primary"):
+        progress_bar = st.progress(0)
+        total_files = len(target_images)
         
-        # ダウンロードボタン
+        # ★ 全ての結果をテキストファイルにまとめるための変数
+        all_results_text = ""
+
+        for i, (image, name) in enumerate(target_images):
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                st.markdown(f"**📄 {i+1}枚目: {name}**")
+                st.image(image, use_container_width=True)
+            
+            with col2:
+                with st.spinner(f'{selected_model_name} で解析中...'):
+                    try:
+                        prompt = "この画像の手書き文字をすべてテキスト化してください。誤字脱字を修正せず、そのまま読み取ってください。"
+                        response = model.generate_content([prompt, image])
+                        
+                        text_result = response.text
+                        
+                        st.success("完了")
+                        st.text_area(f"読み取り結果 ({name})", text_result, height=200)
+                        
+                        # ★ 結果を結合して保存
+                        all_results_text += f"--- {name} の結果 ---\n{text_result}\n\n"
+
+                    except Exception as e:
+                        # ★ エラーを日本語に変換して表示
+                        jp_msg = get_japanese_error_message(str(e))
+                        st.error(f"エラーが発生しました: {jp_msg}")
+                        st.warning("⚠️ モデルを変更するか、時間を置いて再試行してください。")
+                        
+                        # エラー内容もテキストファイルに残す
+                        all_results_text += f"--- {name} (エラー) ---\n{jp_msg}\n\n"
+            
+            st.divider()
+            progress_bar.progress((i + 1) / total_files)
+        
+        st.success("🎉 すべて完了しました！")
+        
+        # ★ ダウンロードボタンを追加
         st.download_button(
             label="📄 結果をテキストファイルでダウンロード",
             data=all_results_text,
-            file_name="ocr_result.txt",
-            mime="text/plain",
-            use_container_width=True
+            file_name="ocr_results.txt",
+            mime="text/plain"
         )
