@@ -16,7 +16,7 @@ except Exception as e:
     st.error(f"設定エラー: {e}")
 
 # ==========================================
-# 2. エラーメッセージの日本語変換ロジック
+# 2. エラーメッセージ変換ロジック
 # ==========================================
 def get_japanese_error_message(english_error_text):
     if not english_error_text: return "不明なエラーが発生しました。"
@@ -40,67 +40,76 @@ def get_japanese_error_message(english_error_text):
 # 3. アプリの画面構成
 # ==========================================
 st.title("AI OCRアプリ 🤖")
-st.write("クリップボードの画像を貼り付けて、文字を読み取ります。")
 
 # --- セッション情報の初期化 ---
 if 'pasted_images' not in st.session_state:
     st.session_state.pasted_images = []
 
-# --- 画像ペーストエリア ---
-st.write("### 1. 画像の追加")
-paste_result = paste_image_button(
-    label="📋 画像をペースト (追加)",
-    background_color="#4CAF50",
-    hover_background_color="#45a049",
-)
+st.write("---")
 
-if paste_result.image_data is not None:
-    if len(st.session_state.pasted_images) == 0 or \
-       st.session_state.pasted_images[-1] != paste_result.image_data:
-        st.session_state.pasted_images.append(paste_result.image_data)
+# ★★★ レイアウト修正箇所：ここから ★★★
+# 2つのカラム（列）を作って、ボタンを横に並べます
+col1, col2 = st.columns([1, 1])
 
-# --- リスト表示とクリアボタン ---
-st.write(f"### 2. 現在のリスト: {len(st.session_state.pasted_images)}枚")
+with col1:
+    st.write("##### 1. 画像を追加")
+    # ペーストボタン
+    paste_result = paste_image_button(
+        label="📋 画像をペースト",
+        background_color="#4CAF50",
+        hover_background_color="#45a049",
+    )
+    # 画像追加処理
+    if paste_result.image_data is not None:
+        if len(st.session_state.pasted_images) == 0 or \
+           st.session_state.pasted_images[-1] != paste_result.image_data:
+            st.session_state.pasted_images.append(paste_result.image_data)
 
-if st.button("🗑️ ペースト履歴をクリア"):
-    st.session_state.pasted_images = []
-    st.rerun()
+with col2:
+    st.write(f"##### 2. 現在の枚数: {len(st.session_state.pasted_images)}枚")
+    # クリアボタン
+    if st.button("🗑️ 履歴をクリア", use_container_width=True):
+        st.session_state.pasted_images = []
+        st.rerun()
+# ★★★ レイアウト修正箇所：ここまで ★★★
 
+st.write("---")
+
+# --- プレビューエリア（画像があるときだけ表示） ---
 if st.session_state.pasted_images:
-    st.image(st.session_state.pasted_images, width=150, caption=[f"No.{i+1}" for i in range(len(st.session_state.pasted_images))])
+    st.write("##### ▼ 追加された画像リスト")
+    st.image(st.session_state.pasted_images, width=120, caption=[f"No.{i+1}" for i in range(len(st.session_state.pasted_images))])
+
+st.write("") # 余白
 
 # --- OCR実行ボタン ---
-st.write("### 3. 読み取り実行")
+st.write("##### 3. 読み取り実行")
 
-if st.button("🚀 OCR開始"):
+if st.button("🚀 OCR開始 (テキスト化)", type="primary", use_container_width=True):
     if not st.session_state.pasted_images:
-        st.warning("画像がありません。まずは画像をペーストしてください。")
+        st.warning("画像がありません。まずは「画像をペースト」してください。")
     else:
         model = genai.GenerativeModel("gemini-1.5-flash")
         
         progress_bar = st.progress(0)
         total_images = len(st.session_state.pasted_images)
-        
-        # ★ 全ての結果をまとめるための変数
-        all_results_text = ""
+        all_results_text = "" # テキスト保存用
 
         for i, img in enumerate(st.session_state.pasted_images):
             try:
-                with st.spinner(f"{i+1}枚目を解析中..."):
+                with st.spinner(f"{i+1} / {total_images} 枚目を解析中..."):
                     response = model.generate_content([
                         "この画像に書かれている文字をすべて書き出してください。整形は不要です。", 
                         img
                     ])
-                    
                     text_result = response.text
                     
-                    # 画面表示
-                    st.success(f"✅ {i+1}枚目の結果")
-                    st.text_area(label=f"結果 {i+1}", value=text_result, height=150)
+                    # 結果表示
+                    st.success(f"✅ 画像 No.{i+1} の結果")
+                    st.text_area(label=f"結果テキスト {i+1}", value=text_result, height=150)
                     
-                    # ★ テキストファイル用に結果を結合していく
-                    all_results_text += f"--- 画像 No.{i+1} の結果 ---\n"
-                    all_results_text += text_result + "\n\n"
+                    # テキスト結合
+                    all_results_text += f"--- 画像 No.{i+1} の結果 ---\n{text_result}\n\n"
             
             except Exception as e:
                 jp_msg = get_japanese_error_message(str(e))
@@ -109,12 +118,13 @@ if st.button("🚀 OCR開始"):
             
             progress_bar.progress((i + 1) / total_images)
 
-        # ★ 全ての処理が終わったらダウンロードボタンを表示
-        st.success("すべての処理が完了しました！")
+        st.success("🎉 すべての処理が完了しました！")
         
+        # ダウンロードボタン
         st.download_button(
             label="📄 結果をテキストファイルでダウンロード",
             data=all_results_text,
             file_name="ocr_result.txt",
-            mime="text/plain"
+            mime="text/plain",
+            use_container_width=True
         )
