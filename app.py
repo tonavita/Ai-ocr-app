@@ -13,6 +13,7 @@ st.set_page_config(page_title="AI OCR App", layout="wide")
 # 0. エラーメッセージの日本語変換関数
 # ==========================================
 def get_japanese_error_message(english_error_text):
+    """英語のエラーを日本語の案内文に変換する"""
     if not english_error_text: return "不明なエラーが発生しました。"
     lower_error = str(english_error_text).lower()
 
@@ -38,11 +39,9 @@ st.write("サイドバーからモデルを選択し、画像をアップロー�
 if 'pasted_images' not in st.session_state:
     st.session_state.pasted_images = []
 
-# ★ 結果テキストを保持する変数
 if 'ocr_result_text' not in st.session_state:
     st.session_state.ocr_result_text = ""
 
-# ★ ファイル名を保持する変数（勝手に現在時刻で上書きされないようにするため）
 if 'ocr_filename_default' not in st.session_state:
     st.session_state.ocr_filename_default = ""
 
@@ -63,15 +62,19 @@ except Exception as e:
 with st.sidebar:
     st.header("⚙️ 設定")
     
+    # ★★★ モデルリストを「使えるもの」だけに厳選 ★★★
     model_options = [
-        "gemini-1.5-flash",
-        "gemini-flash-lite-latest",
-        "gemini-1.5-flash-8b",
-        "gemini-1.5-pro",
-        "gemini-2.0-flash-exp",
+        "gemini-flash-lite-latest",  # 【デフォルト】最も制限が緩く軽量
+        "gemini-1.5-flash",          # 標準的でバランスが良い
+        "gemini-1.5-flash-8b",       # 超高速
+        "gemini-2.0-flash-exp",      # 最新の実験版（性能高い）
     ]
     
-    selected_model_name = st.selectbox("使用するAIモデル", model_options, index=0)
+    selected_model_name = st.selectbox(
+        "使用するAIモデル",
+        model_options,
+        index=0  # 一番上（Lite）をデフォルトにする
+    )
 
     try:
         model = genai.GenerativeModel(selected_model_name)
@@ -121,7 +124,7 @@ with st.sidebar:
         if st.button("🗑️ ペースト履歴をクリア"):
             st.session_state.pasted_images = []
             st.session_state.ocr_result_text = ""
-            st.session_state.ocr_filename_default = "" # ファイル名もリセット
+            st.session_state.ocr_filename_default = ""
             st.rerun()
 
         st.caption("追加済みリスト:")
@@ -193,7 +196,7 @@ if target_images:
         # 結果を保存
         st.session_state.ocr_result_text = current_results
         
-        # ★ ここで「ファイル名」を一度だけ生成して保存する（これにより勝手に書き変わるのを防ぐ）
+        # ファイル名を一度だけ生成
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         st.session_state.ocr_filename_default = f"ocr_result_{timestamp}.txt"
         
@@ -222,11 +225,10 @@ if st.session_state.ocr_result_text:
         st.write("") 
         st.write("") 
         
-        # ダウンロードボタン
         st.download_button(
             label="📄 結果をテキストファイルでダウンロード",
             data=st.session_state.ocr_result_text,
-            file_name=file_name_input, # ユーザーが入力した最新の名前が使われます
+            file_name=file_name_input, 
             mime="text/plain",
             type="primary"
         )
