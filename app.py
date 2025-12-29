@@ -64,10 +64,10 @@ with st.sidebar:
     
     # ★★★ モデルリストを「使えるもの」だけに厳選 ★★★
     model_options = [
-        "gemini-flash-lite-latest",  # 【デフォルト】最も制限が緩く軽量
-        "gemini-1.5-flash",          # 標準的でバランスが良い
-        "gemini-1.5-flash-8b",       # 超高速
-        "gemini-2.0-flash-exp",      # 最新の実験版（性能高い）
+        "gemini-2.5-flas",  # 【デフォルト】最も制限が緩く軽量
+        "gemini-2.5-flash-lite",          # 標準的でバランスが良い
+        "gemini-2.0-flash",       # 超高速
+        "gemini-2.5-pro",      # 最新の実験版（性能高い）
     ]
     
     selected_model_name = st.selectbox(
